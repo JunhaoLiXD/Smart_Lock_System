@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bike Anti-Theft Dashboard</title>
+
+<!-- TailwindCSS for styling -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Leaflet for map visualization -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+
+<body class="bg-gray-50 text-gray-800 flex flex-col items-center p-6">
+  <h1 class="text-3xl font-bold mb-4">🚲 Bike Anti-Theft Dashboard</h1>
+
+  <!-- Alarm status card -->
+  <div id="statusCard" class="w-full max-w-md p-4 bg-white rounded-2xl shadow-md mb-4 text-center">
+    <p class="text-xl font-semibold">Status: <span id="alarmStatus" class="text-green-600">Normal</span></p>
+    <p>Last Updated: <span id="timestamp">--</span></p>
+  </div>
+
+  <!-- Accelerometer data -->
+  <div class="w-full max-w-md p-4 bg-white rounded-2xl shadow-md mb-4">
+    <h2 class="text-lg font-bold mb-2">Accelerometer</h2>
+    <p>X: <span id="accelX">--</span> m/s²</p>
+    <p>Y: <span id="accelY">--</span> m/s²</p>
+    <p>Z: <span id="accelZ">--</span> m/s²</p>
+  </div>
+
+  <!-- Battery and GPS info -->
+  <div class="w-full max-w-md p-4 bg-white rounded-2xl shadow-md mb-4">
+    <p>Battery: 🔋 <span id="battery">--</span>%</p>
+    <p>Latitude: <span id="lat">--</span></p>
+    <p>Longitude: <span id="lon">--</span></p>
+  </div>
+
+  <!-- Map container -->
+  <div id="map" class="w-full max-w-md h-64 rounded-2xl shadow-md"></div>
+
+  <!-- Firebase Integration -->
+  <script type="module">
+    // Import Firebase SDK modules
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+    // Replace with your Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyAoLKK-3sx16nk85eMYeuPHZNJO3pBJM08",
+      authDomain: "bike-anti-theft-be6a1.firebaseapp.com",
+      databaseURL: "https://bike-anti-theft-be6a1-default-rtdb.firebaseio.com",
+      projectId: "bike-anti-theft-be6a1",
+      storageBucket: "bike-anti-theft-be6a1.firebasestorage.app",
+      messagingSenderId: "755123831295",
+      appId: "1:755123831295:web:63766f7b428513e7cca7ca"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // Initialize Leaflet map
+    const map = L.map('map').setView([27.96, -82.43], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(map);
+    let marker = L.marker([27.96, -82.43]).addTo(map);
+
+    // Listen for real-time updates from Firebase
+    const statusRef = ref(db, "/bike_status");
+    onValue(statusRef, (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      // Update alarm status text and color
+      document.getElementById("alarmStatus").textContent = data.alarm ? "🚨 ALARM ACTIVE" : "Normal";
+      document.getElementById("alarmStatus").className = data.alarm ? "text-red-600 font-bold" : "text-green-600";
+
+      // Update accelerometer readings
+      document.getElementById("accelX").textContent = data.accel_x?.toFixed(2) ?? "--";
+      document.getElementById("accelY").textContent = data.accel_y?.toFixed(2) ?? "--";
+      document.getElementById("accelZ").textContent = data.accel_z?.toFixed(2) ?? "--";
+
+      // Update battery and GPS
+      document.getElementById("battery").textContent = data.battery ?? "--";
+      document.getElementById("lat").textContent = data.lat ?? "--";
+      document.getElementById("lon").textContent = data.lon ?? "--";
+
+      // Update timestamp
+      const ts = data.timestamp ? new Date(data.timestamp * 1000) : new Date();
+      document.getElementById("timestamp").textContent = ts.toLocaleTimeString();
+
+      // Update marker position on map
+      if (data.lat && data.lon) {
+        marker.setLatLng([data.lat, data.lon]);
+        map.setView([data.lat, data.lon], 15);
+      }
+    });
+  </script>
+</body>
+</html>
