@@ -5,9 +5,8 @@ import fetch from "node-fetch";
 const app = express();
 app.use(bodyParser.json());
 
-// Your Pushover keys (replace these)
-const USER_KEY = "YOUR_USER_KEY";
-const API_TOKEN = "YOUR_API_TOKEN";
+const USER_KEY = "uajq95f2xr3x9kj4dbgjrnot3cri3z";
+const API_TOKEN = "a3zhb5xhpkq1ppzq393tgyriapcqfb";
 
 app.post("/send-alert", async (req, res) => {
   const { title, message } = req.body;
@@ -35,3 +34,4 @@ app.post("/send-alert", async (req, res) => {
 app.listen(5000, () =>
   console.log("Bike Dashboard backend running on port 5000")
 );
+
