@@ -14,10 +14,10 @@ void setup() {
   digitalWrite(TEST_LED, LOW);
 
   if (!SerialBT.begin("BikeLock")) {
-    Serial.println("❌ Bluetooth init failed!");
+    Serial.println("Bluetooth init failed!");
     while (1);
   }
-  Serial.println("✅ Bluetooth Lock ready, waiting for master to connect...");
+  Serial.println("Bluetooth Lock ready, waiting for hub to connect...");
   Serial.println(SerialBT.getBtAddressString());
 }
 
