@@ -4,24 +4,25 @@
 #include <Firebase_ESP_Client.h>
 #include <Arduino.h>
 #include <BluetoothSerial.h>
+#include <TinyGPSPlus.h>
 #include "addons/TokenHelper.h"
 #include "addons/RTDBHelper.h"
+#include "time.h"
 
 BluetoothSerial SerialBT;
-uint8_t lockAddress[] = {0x04, 0x83, 0x08, 0x73, 0x66, 0x82};
+uint8_t lockAddress[] = {"LOCK MAC ADDRESS"};
 
 #define LED_PIN 26
 #define BUZZER_PIN 25      // First active buzzer
-#define BUZZER2_PIN 27     // Second active buzzer (new)
 
 // Create ADXL345 object
 Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
 
 // ---------- Configuration Parameters ----------
-float threshold = 2.0;               // Motion threshold (m/s^2)
+float threshold = 1.0;               // Motion threshold (m/s^2)
 unsigned long sampleInterval = 500;  // Sampling interval (ms)
 unsigned long monitorWindow = 3000;  // Motion detection window (ms)
-int requiredTriggers = 3;            // Number of motion detections required within the window
+int requiredTriggers = 2;            // Number of motion detections required within the window
 unsigned long alarmDuration = 5000;  // Alarm duration (ms)
 
 // ---------- Calibration Parameters ----------
@@ -41,13 +42,18 @@ unsigned long lastUploadTime = 0;
 const unsigned long UPLOAD_INTERVAL = 5000; // Upload every 5 seconds
 
 // ---------- WiFi Configuration ----------
-#define WIFI_SSID "Jerry"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "WIFI NAME"
+#define WIFI_PASSWORD "PASSWORD"
 
 // ----------- Firebase Configuration --------
-#define API_KEY "AIzaSyAoLKK-3sx16nk85eMYeuPHZNJO3pBJM08"
-#define DATABASE_URL "https://bike-anti-theft-be6a1-default-rtdb.firebaseio.com"
+#define API_KEY "FIREBASE API KEY"
+#define DATABASE_URL "DATABASE URL"
 
+// ------------ GPS --------------
+HardwareSerial GPS_Serial(2);
+TinyGPSPlus gps;
+
+// ----------- Firebase -----------------
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
@@ -60,15 +66,18 @@ void uploadToFirebase(float ax, float ay, float az, bool alarm);
 
 void setup() {
   Serial.begin(115200);
+
+  // ----------- GPS INITIALIZATION -----------
+  GPS_Serial.begin(9600, SERIAL_8N1, 4, 5);  // RX = 4, TX = 5
+  Serial.println("GPS initialized on pins 4 (RX) and 5 (TX)");
+  
   Wire.begin(21, 22); // SDA, SCL pins for I2C
 
   pinMode(LED_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(BUZZER2_PIN, OUTPUT);
 
   digitalWrite(LED_PIN, LOW);
   digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(BUZZER2_PIN, LOW);
 
   SerialBT.begin("BikeReceiver", true);
   Serial.println("Bluetooth initialized as master.");
@@ -96,7 +105,7 @@ void setup() {
 
   // Connect to WiFi
   Serial.print("Connecting to WiFi");
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
@@ -108,10 +117,7 @@ void setup() {
   config.api_key = API_KEY;
   config.database_url = DATABASE_URL;
 
-  // Optional but safer: set a unique client name
-  config.token_status_callback = tokenStatusCallback;
-
-  // You can use anonymous authentication (no login)
+  // Use anonymous authentication
   if (Firebase.signUp(&config, &auth, "", "")) {
     Serial.println("Firebase sign-up successful (anonymous).");
   } else {
@@ -121,12 +127,29 @@ void setup() {
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 
-  // ---------- Perform Initial Calibration ----------
+  // Perform Initial Calibration
   calibrateADXL();
+
+    // ----------- Time Sync -------------------
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  Serial.println("Waiting for NTP time sync...");
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo)) {
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println("\nTime synchronized successfully!");
 }
 
 void loop() {
   unsigned long currentTime = millis();
+
+  while (GPS_Serial.available()) {
+    char c = GPS_Serial.read();
+    //Serial.write(c);
+    gps.encode(c);
+  }
 
   if (SerialBT.available()) {
     String msg = SerialBT.readStringUntil('\n');
@@ -152,7 +175,6 @@ void loop() {
       // Both buzzers ON + LED ON during alarm
       digitalWrite(LED_PIN, HIGH);
       digitalWrite(BUZZER_PIN, HIGH);
-      digitalWrite(BUZZER2_PIN, HIGH);
     } else {
       resetAlarm();
     }
@@ -201,8 +223,9 @@ void loop() {
     lastUploadTime = currentTime;
     sensors_event_t event;
     accel.getEvent(&event);
-    uploadToFirebase(event.acceleration.x, event.acceleration.y, event.acceleration.z, isCut);
+    uploadToFirebase(event.acceleration.x, event.acceleration.y, event.acceleration.z, alarmActive);
   }
+
 }
 
 // =======================================================
@@ -238,7 +261,6 @@ void triggerAlarm() {
   alarmStartTime = millis();
   digitalWrite(LED_PIN, HIGH);
   digitalWrite(BUZZER_PIN, HIGH);
-  digitalWrite(BUZZER2_PIN, HIGH);
 }
 
 // =======================================================
@@ -248,9 +270,9 @@ void resetAlarm() {
   alarmActive = false;
   digitalWrite(LED_PIN, LOW);
   digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(BUZZER2_PIN, LOW);
   motionCount = 0;
   windowStartTime = 0;
+  Firebase.RTDB.setBool(&fbdo, "device/001/alarm", false);
   Serial.println("Alarm reset. Monitoring resumed.\n");
 }
 
@@ -263,11 +285,35 @@ void uploadToFirebase(float ax, float ay, float az, bool alarm) {
     return;
   }
 
-  // ---- Example data (replace with actual readings later) ----
+  // ----  data ----
   float battery = 82.0;     // e.g., from analogRead(batteryPin)
-  float lat = 27.961;       // e.g., from GPS module
-  float lon = -82.442;      // e.g., from GPS module
-  unsigned long timestamp = millis() / 1000; // seconds since boot, or use actual RTC time
+
+  float lat, lon;
+  bool hasGPS = getGPSLocation(lat, lon);
+
+  if (!hasGPS) {
+    Serial.println("No GPS signal. Fetching last known location from Firebase...");
+    
+    if (Firebase.RTDB.getFloat(&fbdo, "bike_status/lat")) {
+      if (fbdo.dataType() == "float" || fbdo.dataType() == "double") {
+        lat = fbdo.floatData();
+      }
+    }
+
+    if (Firebase.RTDB.getFloat(&fbdo, "bike_status/lon")) {
+      if (fbdo.dataType() == "float" || fbdo.dataType() == "double") {
+        lon = fbdo.floatData();
+      }
+    }
+    
+    Serial.printf("Using last known location: %.6f, %.6f\n", lat, lon);
+  }
+
+  if (!hasGPS) {
+      Serial.println("GPS not fixed yet, using last known or placeholder values.");
+  }
+
+  unsigned long timestamp = getUnixTime();
 
   FirebaseJson json;
 
@@ -282,9 +328,32 @@ void uploadToFirebase(float ax, float ay, float az, bool alarm) {
 
   // Upload the entire object to /bike_status
   if (Firebase.RTDB.setJSON(&fbdo, "bike_status", &json)) {
-    Serial.println("Data uploaded to Firebase");
+    Serial.println("Data uploaded to Firebase as JSON object");
+    if (alarmActive || isCut) {
+      Serial.println("Alarm state detected → sending alarm flag to Firebase");
+      Firebase.RTDB.setBool(&fbdo, "device/001/alarm", true);
+    }
   } else {
     Serial.print("Upload failed: ");
     Serial.println(fbdo.errorReason());
   }
+}
+
+// ------------ GPS --------------------
+bool getGPSLocation(float &lat, float &lon) {
+  if (gps.location.isValid()) {
+      lat = gps.location.lat();
+      lon = gps.location.lng();
+      return true;
+  }
+  return false;
+}
+
+// ----------- Time --------------------
+unsigned long getUnixTime() {
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo)) {
+    return mktime(&timeinfo);  // Convert to epoch seconds
+  }
+  return 0; // fallback
 }
